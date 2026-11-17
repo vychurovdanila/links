@@ -1,4 +1,4 @@
-# BRIEF.md — networkmap (Makefab)
+# BRIEF.md — links (Makefab)
 
 ## Что делаем
 AI-ассистент по управлению отношениями (AI-driven CRM) в виде визуального графа. 
