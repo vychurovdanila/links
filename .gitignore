@@ -1,0 +1,33 @@
+# Зависимости и сборка
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Логи
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Редакторы и ОС
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Переменные окружения
+.env
+.env.*
+!.env.example
+
+# Служебные артефакты проекта
+result.json
+DataExport/
