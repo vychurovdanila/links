@@ -7,6 +7,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import router as api_router
 from app.core.config import settings
 from app.db import database  # noqa: F401  # engine/Base для миграций (init_db)
 
@@ -27,6 +28,10 @@ app.add_middleware(
 def health_check() -> dict[str, str]:
     """Проверка живости сервиса."""
     return {"status": "ok"}
+
+
+# Роутеры домена (граф и прочее).
+app.include_router(api_router)
 
 
 if __name__ == "__main__":
