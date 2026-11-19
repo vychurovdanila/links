@@ -102,12 +102,31 @@ class Agreement(Base):
     """Договорённость с человеком и её дедлайн."""
 
     __tablename__ = "agreements"
+    # Защита от накопления дублей: у одного человека текст договорённости уникален.
+    __table_args__ = (
+        UniqueConstraint("person_id", "text", name="_person_agreement_uc"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     person_id: Mapped[int] = mapped_column(
         ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Название кейса (дела/проекта), к которому относится договорённость.
+    # Заполняется ИИ; может отсутствовать.
+    case_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Тип договорённости: commitment / intention / closed.
+    type: Mapped[str] = mapped_column(
+        String(32), default="commitment", nullable=False, server_default="commitment"
+    )
+    # Кто должен выполнить: me (я) или them (собеседник).
+    debtor: Mapped[str] = mapped_column(
+        String(16), default="me", nullable=False, server_default="me"
+    )
+    # Примерная ли дата (например, «на днях», «в течение месяца»).
+    is_approximate: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
+    )
     deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_completed: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"

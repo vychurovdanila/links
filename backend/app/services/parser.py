@@ -20,7 +20,7 @@ from app.models.models import Group, Message, Person
 MY_TELEGRAM_ID = 708435728
 
 # Сколько последних сообщений на чат сохраняем.
-MESSAGES_LIMIT = 100
+MESSAGES_LIMIT = 1000
 
 # Максимальная длина телефона в модели Person.phone_number (String(32)).
 PHONE_MAX_LENGTH = 32

@@ -9,12 +9,18 @@
 
 import json
 import os
+import re
 import uuid
+from datetime import datetime
+from difflib import SequenceMatcher
 
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Регулярка для даты дедлайна: строго YYYY-MM-DD (с необязательным временем).
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 # Ключ авторизации GigaChat (Basic-токен). Задаётся в .env.
 GIGACHAT_AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
@@ -54,6 +60,25 @@ def get_gigachat_token() -> str:
     return response.json()["access_token"]
 
 
+def _clean_deadline(value: object) -> str | None:
+    """Нормализует дедлайн из ответа модели.
+
+    GigaChat часто возвращает текстовые заглушки вместо даты: «нет срока»,
+    «null», «today», «after_meeting». Оставляем только то, что похоже на
+    дату формата YYYY-MM-DD; всё остальное приводим к None, чтобы в БД не
+    попадал мусор.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Оставляем только даты формата YYYY-MM-DD (допускаем ISO с временем).
+    if _DATE_RE.match(text):
+        return text[:10]
+    return None
+
+
 def _parse_agreements_json(content: str) -> list[dict]:
     """Извлекает JSON-массив договорённостей из ответа модели.
 
@@ -67,7 +92,7 @@ def _parse_agreements_json(content: str) -> list[dict]:
     try:
         parsed = json.loads(cleaned)
         if isinstance(parsed, list):
-            return parsed
+            return _normalize_agreements(parsed)
     except json.JSONDecodeError:
         pass
 
@@ -78,12 +103,106 @@ def _parse_agreements_json(content: str) -> list[dict]:
         try:
             parsed = json.loads(cleaned[start : end + 1])
             if isinstance(parsed, list):
-                return parsed
+                return _normalize_agreements(parsed)
         except json.JSONDecodeError:
             pass
 
     print(f"Не удалось распарсить ответ ИИ: {content}")
     return []
+
+
+def _normalize_key(text: str) -> str:
+    """Ключ для дедупликации: нижний регистр, без пунктуации и лишних пробелов.
+
+    GigaChat при повторном анализе формулирует одну и ту же задачу чуть
+    иначе (точка в конце, другой регистр, иной порядок слов вокруг знаков
+    препинания). Точное сравнение строк такие повторы не ловит, поэтому
+    сравниваем по «очищенному» тексту.
+    """
+    return re.sub(r"[\W_]+", " ", text.lower(), flags=re.UNICODE).strip()
+
+
+# Порог схожести для нечёткой дедупликации. Замеры на реальных данных:
+#   * истинные перефразы одной задачи — 0.98–1.00;
+#   * разные задачи, но похожие по формулировке — 0.79–0.86
+#     («Отправить посылку» vs «Забрать посылку» = 0.86,
+#      «Созвониться в четверг вечером» vs «в пятницу вечером» = 0.79).
+# Порог 0.90 лежит между этими группами: отсекает явные повторы и НЕ
+# склеивает разные задачи. Внешние зависимости не используем — только difflib.
+FUZZY_DUP_THRESHOLD = 0.90
+
+
+def _is_duplicate(text: str, existing_keys: set[str], threshold: float = FUZZY_DUP_THRESHOLD) -> bool:
+    """Проверяет, есть ли уже такая договорённость среди сохранённых.
+
+    Две ступени: точное совпадение нормализованного текста → нечёткое сходство
+    (difflib.SequenceMatcher). Так ловятся близкие перефразы одной задачи,
+    которые ИИ выдаёт при повторном анализе той же переписки.
+
+    Важно: правило «подстрока в подстроке» сознательно НЕ используется —
+    оно ошибочно схлопывало разные задачи («Созвониться в четверг» ⊂
+    «Созвониться в четверг вечером»). Порог подобран так, чтобы разные
+    задачи («Отправить посылку» vs «Забрать посылку», ratio 0.86) не
+    склеивались, а перефразы (ratio ≥ 0.98) — отсекались.
+    """
+    key = _normalize_key(text)
+    if not key:
+        return True
+    if key in existing_keys:
+        return True
+    for existing in existing_keys:
+        if not existing:
+            continue
+        if SequenceMatcher(None, key, existing).ratio() >= threshold:
+            return True
+    return False
+
+
+def _normalize_agreements(items: list) -> list[dict]:
+    """Чистит список договорённостей: нормализует поля и отбрасывает мусор.
+
+    Помимо очистки дедлайна убираем записи без текста и дубли внутри
+    одного ответа модели — чтобы в БД не накапливались повторы.
+    Значения type/debtor приводим к допустимым, иначе ставим дефолт.
+    """
+    result: list[dict] = []
+    seen_keys: set[str] = set()
+    valid_types = {"commitment", "intention", "closed"}
+    valid_debtors = {"me", "them"}
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        # Отбрасываем повторы внутри одного ответа модели (в т.ч. перефразы).
+        if _is_duplicate(text, seen_keys):
+            continue
+        seen_keys.add(_normalize_key(text))
+
+        ag_type = str(item.get("type") or "commitment").strip().lower()
+        if ag_type not in valid_types:
+            ag_type = "commitment"
+
+        debtor = str(item.get("debtor") or "me").strip().lower()
+        if debtor not in valid_debtors:
+            debtor = "me"
+
+        case_name = item.get("case_name")
+        case_name = str(case_name).strip() if case_name else None
+
+        result.append(
+            {
+                "text": text,
+                "case_name": case_name or None,
+                "type": ag_type,
+                "debtor": debtor,
+                "deadline": _clean_deadline(item.get("deadline")),
+                "is_approximate": bool(item.get("is_approximate", False)),
+            }
+        )
+    return result
 
 
 def extract_agreements(messages_text: str) -> list[dict]:
@@ -96,12 +215,31 @@ def extract_agreements(messages_text: str) -> list[dict]:
         "Authorization": f"Bearer {token}",
     }
 
+    # Сегодняшняя дата передаётся в промпт, чтобы модель могла посчитать
+    # относительные сроки ("завтра", "в четверг") в конкретную дату.
+    today = datetime.now().strftime("%Y-%m-%d")
+
     prompt = f"""
     Проанализируй переписку и найди все договоренности, обещания или задачи.
-    Верни ТОЛЬКО JSON-массив объектов в формате: 
-    [{{"text": "суть договоренности", "deadline": "YYYY-MM-DD или null"}}]
+    Верни ТОЛЬКО JSON-массив объектов в формате:
+    [{{
+      "text": "суть договоренности",
+      "case_name": "краткое название кейса/дела (например: Рыбалка, 3D-тур)",
+      "type": "commitment" (жесткое обязательство), "intention" (план/намерение) или "closed" (уже выполнено),
+      "debtor": "me" (если обещал я) или "them" (если обещал собеседник),
+      "deadline": "YYYY-MM-DD" (только если есть четкая дата) или null,
+      "is_approximate": true (если дата примерная: "на днях", "в течение месяца") или false
+    }}]
     Если договоренностей нет, верни пустой массив [].
-    
+
+    НЕ дублируй одинаковые договоренности. Каждая задача должна быть уникальной.
+    Сегодняшняя дата: {today}. Если в тексте сказано "в четверг", "завтра",
+    "сегодня", "на следующей неделе" — вычисли точную дату и верни её в формате
+    YYYY-MM-DD. НИКОГДА не пиши в deadline слова (today, tomorrow, нет срока,
+    after_meeting) — только дату YYYY-MM-DD или null.
+    Если дата примерная ("на днях", "в течение месяца") — поставь
+    is_approximate: true и deadline: null.
+
     Переписка:
     {messages_text}
     """

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.models.models import Person
+from app.models.models import Agreement, Person
 
 router = APIRouter(prefix="/api", tags=["graph"])
 
@@ -86,3 +86,38 @@ def get_graph(db: Session = Depends(get_db)) -> dict:
         )
 
     return {"nodes": nodes, "edges": edges}
+
+
+@router.get("/graph/agreements")
+def get_graph_agreements(db: Session = Depends(get_db)) -> list[dict]:
+    """Отдаёт список всех договорённостей для отрисовки на графе.
+
+    Формат элемента совпадает с ожиданиями фронтенда React Flow:
+    person_name (кто), case_name (кейс), text (суть), deadline (дата или null),
+    type (commitment/intention/closed) и debtor (me/them).
+
+    Дедлайн приводим к ISO-строке "YYYY-MM-DD"; если его нет — отдаём null,
+    чтобы фронтенд единообразно обрабатывал отсутствие срока.
+    """
+    rows = (
+        db.query(Agreement, Person.first_name)
+        .join(Person, Person.id == Agreement.person_id)
+        .order_by(Agreement.created_at.desc(), Agreement.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "person_name": person_name,
+            "case_name": agreement.case_name,
+            "text": agreement.text,
+            "deadline": (
+                agreement.deadline.strftime("%Y-%m-%d")
+                if agreement.deadline
+                else None
+            ),
+            "type": agreement.type,
+            "debtor": agreement.debtor,
+        }
+        for agreement, person_name in rows
+    ]
