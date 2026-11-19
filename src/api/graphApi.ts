@@ -1,8 +1,10 @@
 import type { ContactEdge, ContactNode } from '../types/graph';
 
-// Базовый адрес бэкенда. По умолчанию — локальный FastAPI (uvicorn на :8000).
-// Можно переопределить через VITE_API_URL при деплое/проксировании.
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+// Базовый адрес бэкенда FastAPI (uvicorn на :8000).
+// В dev используем LAN-IP ПК, чтобы граф открывался и с телефона в той же
+// Wi-Fi сети: localhost с телефона указывал бы на сам телефон, а не на ПК.
+// При деплое/проксировании адрес переопределяется через VITE_API_URL.
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.0.111:8000';
 
 // Ответ эндпоинта GET /api/graph: узлы и связи в формате React Flow.
 export interface GraphData {

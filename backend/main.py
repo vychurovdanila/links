@@ -37,4 +37,6 @@ app.include_router(api_router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # host 0.0.0.0 — сервер слушает все интерфейсы, чтобы граф открывался
+    # с телефона по локальной сети (например, http://192.168.0.111:8000).
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -45,8 +45,14 @@ class Settings(BaseSettings):
                 return f"{prefix}{absolute.as_posix()}"
         return value
 
-    # Разрешённый источник фронтенда (Vite dev-сервер).
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    # Разрешённые источники фронтенда (Vite dev-сервер):
+    # localhost — для работы за тем же ПК, LAN-адреса — для доступа с телефона.
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://192.168.0.111:5173",
+        "http://192.168.0.111:8000",
+    ]
 
     # Название проекта (для заголовков и документации).
     PROJECT_NAME: str = "Links API"
