@@ -6,6 +6,7 @@
 """
 
 import random
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -21,6 +22,33 @@ GRAPH_PERSONS_LIMIT = 50
 
 # Радиус разброса случайных позиций узлов вокруг центра (в пикселях React Flow).
 GRAPH_SPREAD = 400
+
+# Статусы договорённости, которые считаются «закрытыми» и не влияют на цвет узла.
+CLOSED_TYPES = {"closed"}
+
+# Стили узлов по статусу (совместимы с React Flow: стили задаются инлайном).
+# Красный — у меня просроченный/сегодняшний долг, синий — долг на собеседнике,
+# серый — активных договорённостей нет.
+STYLE_RED = {
+    "background": "#7f1d1d",
+    "border": "2px solid #ef4444",
+    "color": "white",
+    "borderRadius": "50%",
+    "padding": "10px",
+}
+STYLE_BLUE = {
+    "background": "#1e3a8a",
+    "border": "2px solid #3b82f6",
+    "color": "white",
+    "borderRadius": "50%",
+    "padding": "10px",
+}
+STYLE_GRAY = {
+    "background": "#334155",
+    "color": "white",
+    "borderRadius": "50%",
+    "padding": "10px",
+}
 
 # Центральный узел «Я».
 ME_NODE: dict = {
@@ -38,17 +66,75 @@ ME_NODE: dict = {
 }
 
 
+def _is_open(agreement: Agreement) -> bool:
+    """Договорённость «открыта», если не завершена и не помечена как closed."""
+    if agreement.is_completed:
+        return False
+    return (agreement.type or "").lower() not in CLOSED_TYPES
+
+
+def _serialize_agreement(agreement: Agreement) -> dict:
+    """Приводит ORM-объект Agreement к простому словарю для фронтенда."""
+    deadline = agreement.deadline
+    return {
+        "id": agreement.id,
+        "text": agreement.text,
+        "case_name": agreement.case_name,
+        "type": agreement.type,
+        "debtor": agreement.debtor,
+        "is_approximate": agreement.is_approximate,
+        "is_completed": agreement.is_completed,
+        "deadline": deadline.strftime("%Y-%m-%d") if deadline else None,
+    }
+
+
+def _pick_node_style(agreements: list[Agreement]) -> dict:
+    """Определяет цвет узла по набору договорённостей человека.
+
+    Приоритет: красный (мой просроченный/сегодняшний долг) → синий (долг на
+    собеседнике) → серый (нет активных договорённостей).
+    """
+    open_agreements = [a for a in agreements if _is_open(a)]
+
+    # Красный: есть мой незакрытый долг с дедлайном сегодня или раньше.
+    today = date.today()
+    for agreement in open_agreements:
+        if agreement.debtor != "me" or agreement.deadline is None:
+            continue
+        deadline = agreement.deadline
+        if isinstance(deadline, datetime):
+            deadline_date = deadline.date()
+        else:
+            deadline_date = deadline
+        if deadline_date <= today:
+            return STYLE_RED
+
+    # Синий: есть незакрытый долг на собеседнике.
+    if any(a.debtor == "them" for a in open_agreements):
+        return STYLE_BLUE
+
+    # Иначе — нет активных договорённостей.
+    return STYLE_GRAY
+
+
 @router.get("/graph")
 def get_graph(db: Session = Depends(get_db)) -> dict:
     """Отдаёт граф (узлы и связи) для React Flow.
 
-    Берём только ``Person`` с заполненным ``telegram_id`` — это контакты,
-    с которыми есть чаты. Выборка ограничена первыми GRAPH_PERSONS_LIMIT
-    людьми, чтобы браузер не завис на тысячах узлов.
+    Берём всех ``Person``, у которых есть хотя бы одна договорённость
+    (``Agreement``). Цвет узла кодирует статус долгов:
+
+    - красный — мой незакрытый долг с дедлайном сегодня или в прошлом;
+    - синий — незакрытый долг на собеседнике;
+    - серый — активных договорённостей нет.
+
+    Выборка ограничена первыми GRAPH_PERSONS_LIMIT людьми, чтобы браузер
+    не завис на тысячах узлов.
     """
     persons = (
         db.query(Person)
-        .filter(Person.telegram_id.isnot(None))
+        .join(Agreement, Agreement.person_id == Person.id)
+        .distinct()
         .order_by(Person.id)
         .limit(GRAPH_PERSONS_LIMIT)
         .all()
@@ -58,6 +144,7 @@ def get_graph(db: Session = Depends(get_db)) -> dict:
     edges: list[dict] = []
 
     for person in persons:
+        agreements = list(person.agreements)
         node_id = f"person-{person.id}"
         nodes.append(
             {
@@ -67,14 +154,16 @@ def get_graph(db: Session = Depends(get_db)) -> dict:
                     "x": random.randint(-GRAPH_SPREAD, GRAPH_SPREAD),
                     "y": random.randint(-GRAPH_SPREAD, GRAPH_SPREAD),
                 },
-                "data": {"label": person.first_name},
-                "style": {
-                    "background": "#1e293b",
-                    "color": "white",
-                    "border": "2px solid #3b82f6",
-                    "borderRadius": "50%",
-                    "padding": "10px",
+                "data": {
+                    "label": person.first_name,
+                    "type": "person",
+                    "telegramUsername": person.username,
+                    "agreements_count": len(agreements),
+                    "agreements": [
+                        _serialize_agreement(a) for a in agreements
+                    ],
                 },
+                "style": _pick_node_style(agreements),
             }
         )
         edges.append(
