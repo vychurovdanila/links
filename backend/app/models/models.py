@@ -115,11 +115,11 @@ class Agreement(Base):
     # Название кейса (дела/проекта), к которому относится договорённость.
     # Заполняется ИИ; может отсутствовать.
     case_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Тип договорённости: commitment / intention / closed.
+    # Тип записи: agreement (договорённость) / request (просьба) / intention (намерение).
     type: Mapped[str] = mapped_column(
-        String(32), default="commitment", nullable=False, server_default="commitment"
+        String(32), default="intention", nullable=False, server_default="intention"
     )
-    # Кто должен выполнить: me (я) или them (собеседник).
+    # Кто должен выполнить (на чьей стороне мяч): me (я) или them (собеседник).
     debtor: Mapped[str] = mapped_column(
         String(16), default="me", nullable=False, server_default="me"
     )

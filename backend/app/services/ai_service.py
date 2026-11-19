@@ -167,7 +167,9 @@ def _normalize_agreements(items: list) -> list[dict]:
     """
     result: list[dict] = []
     seen_keys: set[str] = set()
-    valid_types = {"commitment", "intention", "closed"}
+    # Типы по 4 квадрантам: договорённость, просьба, намерение.
+    # "ignore" и любые неизвестные значения приводим к "intention".
+    valid_types = {"agreement", "request", "intention"}
     valid_debtors = {"me", "them"}
 
     for item in items:
@@ -181,9 +183,9 @@ def _normalize_agreements(items: list) -> list[dict]:
             continue
         seen_keys.add(_normalize_key(text))
 
-        ag_type = str(item.get("type") or "commitment").strip().lower()
+        ag_type = str(item.get("type") or "intention").strip().lower()
         if ag_type not in valid_types:
-            ag_type = "commitment"
+            ag_type = "intention"
 
         debtor = str(item.get("debtor") or "me").strip().lower()
         if debtor not in valid_debtors:
@@ -217,28 +219,30 @@ def extract_agreements(messages_text: str) -> list[dict]:
 
     # Сегодняшняя дата передаётся в промпт, чтобы модель могла посчитать
     # относительные сроки ("завтра", "в четверг") в конкретную дату.
-    today = datetime.now().strftime("%Y-%m-%d")
+    # (дата подставляется прямо в f-строку промпта ниже)
 
     prompt = f"""
-    Проанализируй переписку и найди все договоренности, обещания или задачи.
-    Верни ТОЛЬКО JSON-массив объектов в формате:
-    [{{
-      "text": "суть договоренности",
-      "case_name": "краткое название кейса/дела (например: Рыбалка, 3D-тур)",
-      "type": "commitment" (жесткое обязательство), "intention" (план/намерение) или "closed" (уже выполнено),
-      "debtor": "me" (если обещал я) или "them" (если обещал собеседник),
-      "deadline": "YYYY-MM-DD" (только если есть четкая дата) или null,
-      "is_approximate": true (если дата примерная: "на днях", "в течение месяца") или false
-    }}]
-    Если договоренностей нет, верни пустой массив [].
+    Ты — умный AI-ассистент CRM. Проанализируй переписку. 
+    Сегодняшняя дата: {datetime.now().strftime('%Y-%m-%d')}.
 
-    НЕ дублируй одинаковые договоренности. Каждая задача должна быть уникальной.
-    Сегодняшняя дата: {today}. Если в тексте сказано "в четверг", "завтра",
-    "сегодня", "на следующей неделе" — вычисли точную дату и верни её в формате
-    YYYY-MM-DD. НИКОГДА не пиши в deadline слова (today, tomorrow, нет срока,
-    after_meeting) — только дату YYYY-MM-DD или null.
-    Если дата примерная ("на днях", "в течение месяца") — поставь
-    is_approximate: true и deadline: null.
+    Классифицируй каждую найденную сущность по типу (type) и определи, на чьей стороне мяч (debtor):
+    1. "agreement" (Договоренность) — есть явное согласие обеих сторон. debtor="me" (если я обещал), debtor="them" (если они обещали).
+    2. "request" (Просьба) — один просит другого, но НЕТ четкого согласия. debtor="me" (если ОНИ просят МЕНЯ), debtor="them" (если Я прошу ИХ).
+    3. "intention" (Намерение) — планы без обязательств ("надо бы встретиться").
+    4. "ignore" — личные дела собеседника ("я поеду смотреть квартиру"), НЕ сохраняй их.
+
+    Верни ТОЛЬКО валидный JSON-массив:
+    [
+      {{
+        "type": "agreement" | "request" | "intention",
+        "case_name": "краткое название темы",
+        "text": "суть задачи",
+        "debtor": "me" | "them",
+        "deadline": "YYYY-MM-DD" (или null),
+        "is_approximate": true | false
+      }}
+    ]
+    Если ничего нет, верни [].
 
     Переписка:
     {messages_text}

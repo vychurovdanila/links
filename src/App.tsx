@@ -4,6 +4,29 @@ import '@xyflow/react/dist/style.css';
 import { fetchGraphData } from './api/graphApi';
 import type { Agreement, ContactEdge, ContactNode } from './types/graph';
 
+// Человекочитаемый тип записи и сторона, на которой «мяч».
+const TYPE_LABELS: Record<string, string> = {
+  agreement: 'Договорённость',
+  request: 'Просьба',
+  intention: 'Намерение',
+};
+
+function getTypeLabel(type: string): string {
+  return TYPE_LABELS[type] ?? type;
+}
+
+function getDebtorLabel(type: string, debtor: string): string {
+  // Для просьбы и договорённости «должник» — это тот, кто должен выполнить.
+  const isMe = debtor === 'me';
+  if (type === 'request') {
+    return isMe ? 'Просьба: Я' : 'Просьба: Они';
+  }
+  if (type === 'agreement') {
+    return isMe ? 'Долг: Я' : 'Долг: Они';
+  }
+  return isMe ? 'Намерение: Я' : 'Намерение: Они';
+}
+
 // Боковая панель с деталями выбранного контакта.
 function SidePanel({ node }: { node: ContactNode | null }) {
   return (
@@ -29,9 +52,14 @@ function SidePanel({ node }: { node: ContactNode | null }) {
                   </div>
                 )}
                 <div className="mt-1 text-sm">{agreement.text}</div>
-                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                  <span>{agreement.deadline ?? 'без срока'}</span>
-                  <span>{agreement.debtor === 'me' ? 'долг мой' : 'долг на нём'}</span>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5">
+                    [{getTypeLabel(agreement.type)}]
+                  </span>
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5">
+                    [{getDebtorLabel(agreement.type, agreement.debtor)}]
+                  </span>
+                  <span className="ml-auto">{agreement.deadline ?? 'без срока'}</span>
                 </div>
               </div>
             ))}

@@ -104,7 +104,7 @@ def analyze_person(db, person: Person, messages_count: int) -> None:
         print("Договоренности: []")
         return
 
-    print(f"Найдено договоренностей: {len(agreements)}")
+    print(f"Найдено записей: {len(agreements)}")
     for ag in agreements:
         print(
             f"- [{ag.get('type')}/{ag.get('debtor')}] {ag.get('text')} "
@@ -134,7 +134,7 @@ def analyze_person(db, person: Person, messages_count: int) -> None:
                 person_id=person.id,
                 text=text_value,
                 case_name=ag.get("case_name"),
-                type=ag.get("type", "commitment"),
+                type=ag.get("type", "intention"),
                 debtor=ag.get("debtor", "me"),
                 is_approximate=bool(ag.get("is_approximate", False)),
                 deadline=_parse_deadline(ag.get("deadline")),

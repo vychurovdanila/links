@@ -6,7 +6,6 @@
 """
 
 import random
-from datetime import date, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -26,9 +25,13 @@ GRAPH_SPREAD = 400
 # Статусы договорённости, которые считаются «закрытыми» и не влияют на цвет узла.
 CLOSED_TYPES = {"closed"}
 
-# Стили узлов по статусу (совместимы с React Flow: стили задаются инлайном).
-# Красный — у меня просроченный/сегодняшний долг, синий — долг на собеседнике,
-# серый — активных договорённостей нет.
+# Стили узлов по квадрантам (совместимы с React Flow: стили задаются инлайном).
+# Приоритет при нескольких открытых делах: долг важнее просьбы.
+#   красный    — незакрытый agreement с debtor="me"  (мой долг);
+#   синий      — незакрытый agreement с debtor="them" (их долг);
+#   фиолетовый — незакрытый request с debtor="me"    (их просьба ко мне);
+#   оранжевый  — незакрытый request с debtor="them"  (моя просьба к ним);
+#   серый      — только intention или закрытые дела.
 STYLE_RED = {
     "background": "#7f1d1d",
     "border": "2px solid #ef4444",
@@ -39,6 +42,20 @@ STYLE_RED = {
 STYLE_BLUE = {
     "background": "#1e3a8a",
     "border": "2px solid #3b82f6",
+    "color": "white",
+    "borderRadius": "50%",
+    "padding": "10px",
+}
+STYLE_PURPLE = {
+    "background": "#4c1d95",
+    "border": "2px solid #a855f7",
+    "color": "white",
+    "borderRadius": "50%",
+    "padding": "10px",
+}
+STYLE_ORANGE = {
+    "background": "#78350f",
+    "border": "2px solid #f59e0b",
     "color": "white",
     "borderRadius": "50%",
     "padding": "10px",
@@ -89,31 +106,36 @@ def _serialize_agreement(agreement: Agreement) -> dict:
 
 
 def _pick_node_style(agreements: list[Agreement]) -> dict:
-    """Определяет цвет узла по набору договорённостей человека.
+    """Определяет цвет узла по 4 квадрантам дел человека.
 
-    Приоритет: красный (мой просроченный/сегодняшний долг) → синий (долг на
-    собеседнике) → серый (нет активных договорённостей).
+    Приоритет при нескольких незакрытых делах: долг (agreement) важнее
+    просьбы (request). Внутри одного типа «мой» (debtor="me") важнее.
+
+    - красный    — незакрытый agreement, debtor="me"  (мой долг);
+    - синий      — незакрытый agreement, debtor="them" (их долг);
+    - фиолетовый — незакрытый request,   debtor="me"  (просят меня);
+    - оранжевый  — незакрытый request,   debtor="them" (прошу я);
+    - серый      — только intention или закрытые дела.
     """
     open_agreements = [a for a in agreements if _is_open(a)]
 
-    # Красный: есть мой незакрытый долг с дедлайном сегодня или раньше.
-    today = date.today()
-    for agreement in open_agreements:
-        if agreement.debtor != "me" or agreement.deadline is None:
-            continue
-        deadline = agreement.deadline
-        if isinstance(deadline, datetime):
-            deadline_date = deadline.date()
-        else:
-            deadline_date = deadline
-        if deadline_date <= today:
-            return STYLE_RED
+    def _has(ag_type: str, debtor: str) -> bool:
+        return any(
+            (a.type or "").lower() == ag_type and a.debtor == debtor
+            for a in open_agreements
+        )
 
-    # Синий: есть незакрытый долг на собеседнике.
-    if any(a.debtor == "them" for a in open_agreements):
+    # Долги важнее просьб: сначала квадранты agreement, затем request.
+    if _has("agreement", "me"):
+        return STYLE_RED
+    if _has("agreement", "them"):
         return STYLE_BLUE
+    if _has("request", "me"):
+        return STYLE_PURPLE
+    if _has("request", "them"):
+        return STYLE_ORANGE
 
-    # Иначе — нет активных договорённостей.
+    # Иначе — только намерения или закрытые дела.
     return STYLE_GRAY
 
 
@@ -122,11 +144,13 @@ def get_graph(db: Session = Depends(get_db)) -> dict:
     """Отдаёт граф (узлы и связи) для React Flow.
 
     Берём всех ``Person``, у которых есть хотя бы одна договорённость
-    (``Agreement``). Цвет узла кодирует статус долгов:
+    (``Agreement``). Цвет узла кодирует квадрант дела:
 
-    - красный — мой незакрытый долг с дедлайном сегодня или в прошлом;
-    - синий — незакрытый долг на собеседнике;
-    - серый — активных договорённостей нет.
+    - красный    — незакрытый agreement, debtor="me"  (мой долг);
+    - синий      — незакрытый agreement, debtor="them" (их долг);
+    - фиолетовый — незакрытый request,   debtor="me"  (просят меня);
+    - оранжевый  — незакрытый request,   debtor="them" (прошу я);
+    - серый      — только intention или закрытые дела.
 
     Выборка ограничена первыми GRAPH_PERSONS_LIMIT людьми, чтобы браузер
     не завис на тысячах узлов.
