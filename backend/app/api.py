@@ -7,7 +7,7 @@
 
 import random
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -85,6 +85,8 @@ ME_NODE: dict = {
 
 def _is_open(agreement: Agreement) -> bool:
     """Договорённость «открыта», если не завершена и не помечена как closed."""
+    if agreement.is_archived:
+        return False
     if agreement.is_completed:
         return False
     return (agreement.type or "").lower() not in CLOSED_TYPES
@@ -101,6 +103,8 @@ def _serialize_agreement(agreement: Agreement) -> dict:
         "debtor": agreement.debtor,
         "is_approximate": agreement.is_approximate,
         "is_completed": agreement.is_completed,
+        "is_archived": agreement.is_archived,
+        "priority": agreement.priority,
         "deadline": deadline.strftime("%Y-%m-%d") if deadline else None,
     }
 
@@ -233,4 +237,46 @@ def get_graph_agreements(db: Session = Depends(get_db)) -> list[dict]:
             "debtor": agreement.debtor,
         }
         for agreement, person_name in rows
+        if not agreement.is_archived
     ]
+
+
+@router.delete("/agreements/{agreement_id}")
+def archive_agreement(agreement_id: int, db: Session = Depends(get_db)) -> dict:
+    """Мягко удаляет договорённость (свайп влево в UI).
+
+    Запись не удаляется физически, а помечается ``is_archived = True``,
+    поэтому пропадает из графа и боковой панели, но остаётся в БД.
+    """
+    agreement = db.get(Agreement, agreement_id)
+    if agreement is None:
+        raise HTTPException(status_code=404, detail="Договорённость не найдена")
+
+    agreement.is_archived = True
+    db.commit()
+    return {"status": "ok", "id": agreement.id, "is_archived": True}
+
+
+@router.put("/agreements/{agreement_id}/prioritize")
+def prioritize_agreement(agreement_id: int, db: Session = Depends(get_db)) -> dict:
+    """Помечает договорённость как приоритетную/горящую (priority = 1).
+
+    Просьба (``request``) при повышении приоритета превращается в
+    договорённость (``agreement``) — так она попадает в «долг» и
+    подсвечивается красным/синим в зависимость от стороны должника.
+    """
+    agreement = db.get(Agreement, agreement_id)
+    if agreement is None:
+        raise HTTPException(status_code=404, detail="Договорённость не найдена")
+
+    agreement.priority = 1
+    if (agreement.type or "").lower() == "request":
+        agreement.type = "agreement"
+    db.commit()
+    return {
+        "status": "ok",
+        "id": agreement.id,
+        "priority": agreement.priority,
+        "type": agreement.type,
+    }
+

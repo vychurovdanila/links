@@ -9,6 +9,8 @@ export interface Agreement {
   debtor: string;
   is_approximate: boolean;
   is_completed: boolean;
+  is_archived?: boolean;
+  priority?: number;
   deadline: string | null;
 }
 

@@ -131,6 +131,15 @@ class Agreement(Base):
     is_completed: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"
     )
+    # Мягкое удаление: запись скрывается из UI (свайп влево), но не удаляется
+    # из БД. Позволяет восстановить договорённость и не терять историю.
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
+    )
+    # Приоритет: 0 — обычная запись, 1 — приоритетная/горящая (подсветка).
+    priority: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False
     )

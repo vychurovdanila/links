@@ -26,3 +26,33 @@ export async function fetchGraphData(): Promise<GraphData> {
 
   return (await response.json()) as GraphData;
 }
+
+/**
+ * Мягко удаляет договорённость (ставит is_archived = true на бэкенде).
+ *
+ * @throws Error если сервер ответил не-2xx статусом.
+ */
+export async function archiveAgreement(agreementId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/agreements/${agreementId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Не удалось удалить договорённость: HTTP ${response.status}`);
+  }
+}
+
+/**
+ * Помечает договорённость приоритетной/горящей (priority = 1).
+ *
+ * @throws Error если сервер ответил не-2xx статусом.
+ */
+export async function prioritizeAgreement(agreementId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/agreements/${agreementId}/prioritize`, {
+    method: 'PUT',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Не удалось повысить приоритет: HTTP ${response.status}`);
+  }
+}
